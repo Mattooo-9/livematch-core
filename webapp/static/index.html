@@ -1,0 +1,482 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>LiveMatch Core</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --paper:#FAF6EF;
+    --ink:#1E2421;
+    --teal:#1F4D44;
+    --teal-deep:#143732;
+    --amber:#D98A3D;
+    --line:#E4DCCB;
+    --card:#FFFFFF;
+    --muted:#74766F;
+    --danger:#B6442B;
+    --radius:16px;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:var(--paper);
+    color:var(--ink);
+    font-family:'Inter',-apple-system,BlinkMacSystemFont,sans-serif;
+    padding-bottom:84px;
+    min-height:100vh;
+  }
+  h1,h2,h3,.display{font-family:'Fraunces',serif;font-weight:600;letter-spacing:-0.01em;}
+  header.top{
+    padding:22px 18px 14px;
+    border-bottom:1px solid var(--line);
+  }
+  header.top .display{font-size:22px;margin:0;color:var(--teal-deep);}
+  header.top p{margin:4px 0 0;color:var(--muted);font-size:13px;}
+
+  main{padding:16px;max-width:520px;margin:0 auto;}
+  .screen{display:none;}
+  .screen.active{display:block;animation:fade .25s ease;}
+  @keyframes fade{from{opacity:0;transform:translateY(4px);}to{opacity:1;transform:none;}}
+
+  .card{
+    background:var(--card);
+    border:1px solid var(--line);
+    border-radius:var(--radius);
+    padding:18px;
+    margin-bottom:14px;
+  }
+  label{display:block;font-size:13px;color:var(--muted);margin:14px 0 6px;font-weight:500;}
+  label:first-child{margin-top:0;}
+  input[type=text],input[type=number],textarea,select{
+    width:100%;
+    border:1px solid var(--line);
+    border-radius:10px;
+    padding:11px 12px;
+    font-size:15px;
+    font-family:inherit;
+    background:#fff;
+    color:var(--ink);
+  }
+  textarea{resize:vertical;min-height:60px;}
+  .row{display:flex;gap:10px;}
+  .row > *{flex:1;}
+
+  .chip-grid{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px;}
+  .chip{
+    border:1px solid var(--line);
+    background:#fff;
+    border-radius:999px;
+    padding:8px 13px;
+    font-size:13px;
+    cursor:pointer;
+    user-select:none;
+    transition:.15s;
+  }
+  .chip.selected{background:var(--teal);border-color:var(--teal);color:#fff;}
+
+  .btn{
+    display:inline-flex;align-items:center;justify-content:center;gap:6px;
+    border:none;border-radius:12px;
+    padding:13px 18px;
+    font-size:15px;font-weight:600;
+    cursor:pointer;
+    width:100%;
+    font-family:inherit;
+  }
+  .btn-primary{background:var(--teal);color:#fff;}
+  .btn-primary:active{background:var(--teal-deep);}
+  .btn-ghost{background:transparent;border:1px solid var(--line);color:var(--ink);}
+  .btn-danger{background:#fff;border:1px solid var(--danger);color:var(--danger);}
+  .btn-row{display:flex;gap:10px;margin-top:14px;}
+
+  .candidate-photo{
+    width:100%;aspect-ratio:4/5;object-fit:cover;border-radius:var(--radius);
+    background:var(--line);
+  }
+  .candidate-meta{padding:14px 2px 4px;}
+  .candidate-meta .age-city{font-family:'Fraunces',serif;font-size:20px;}
+  .tag{
+    display:inline-block;background:var(--paper);border:1px solid var(--line);
+    border-radius:999px;font-size:12px;padding:4px 10px;margin:4px 6px 0 0;color:var(--teal-deep);
+  }
+  .empty-state{text-align:center;padding:40px 10px;color:var(--muted);}
+  .empty-state .display{color:var(--ink);font-size:18px;margin-bottom:6px;}
+
+  .pulse-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+  .pulse-num{font-family:'Fraunces',serif;font-size:30px;color:var(--teal-deep);}
+  .pulse-label{font-size:12px;color:var(--muted);margin-top:2px;}
+
+  .chat-window{height:50vh;overflow-y:auto;display:flex;flex-direction:column;gap:8px;padding:4px 0;}
+  .msg{max-width:78%;padding:9px 13px;border-radius:14px;font-size:14px;line-height:1.35;}
+  .msg.mine{align-self:flex-end;background:var(--teal);color:#fff;border-bottom-right-radius:4px;}
+  .msg.theirs{align-self:flex-start;background:#fff;border:1px solid var(--line);border-bottom-left-radius:4px;}
+  .chat-input-row{display:flex;gap:8px;margin-top:10px;}
+  .chat-input-row input{flex:1;}
+  .chat-input-row button{width:auto;padding:11px 16px;}
+
+  nav.tabbar{
+    position:fixed;bottom:0;left:0;right:0;
+    display:flex;background:#fff;border-top:1px solid var(--line);
+    padding:8px 6px calc(8px + env(safe-area-inset-bottom));
+  }
+  nav.tabbar button{
+    flex:1;background:none;border:none;font-family:inherit;font-size:11px;color:var(--muted);
+    display:flex;flex-direction:column;align-items:center;gap:3px;padding:6px 2px;cursor:pointer;
+  }
+  nav.tabbar button .ic{font-size:19px;}
+  nav.tabbar button.active{color:var(--teal-deep);font-weight:600;}
+
+  .toast{
+    position:fixed;left:50%;bottom:96px;transform:translateX(-50%);
+    background:var(--ink);color:#fff;padding:10px 16px;border-radius:10px;font-size:13px;
+    opacity:0;pointer-events:none;transition:.25s;z-index:50;
+  }
+  .toast.show{opacity:1;}
+</style>
+</head>
+<body>
+
+<header class="top">
+  <h1 class="display">LiveMatch Core</h1>
+  <p>Честный поиск по цели, району и интересам.</p>
+</header>
+
+<main>
+
+  <!-- ===== PROFILE SCREEN ===== -->
+  <section id="screen-profile" class="screen">
+    <div class="card">
+      <label>Город</label>
+      <input type="text" id="p-city" placeholder="Киев" />
+      <label>Район (необязательно)</label>
+      <input type="text" id="p-district" placeholder="Подол" />
+      <div class="row">
+        <div>
+          <label>Возраст</label>
+          <input type="number" id="p-age" min="18" max="99" />
+        </div>
+        <div>
+          <label>Пол</label>
+          <select id="p-gender">
+            <option value="MALE">Мужчина</option>
+            <option value="FEMALE">Женщина</option>
+            <option value="OTHER">Другое</option>
+          </select>
+        </div>
+      </div>
+      <label>Кого ищешь</label>
+      <select id="p-seeking">
+        <option value="MALE">Мужчин</option>
+        <option value="FEMALE">Женщин</option>
+        <option value="ANY">Неважно</option>
+      </select>
+      <label>Цель знакомства</label>
+      <select id="p-goal">
+        <option value="COMMUNICATION">Общение</option>
+        <option value="DATE">Свидание</option>
+        <option value="INTIMATE">Секс</option>
+        <option value="REGULAR">Регулярное</option>
+        <option value="FRIENDSHIP">Дружба</option>
+        <option value="INTERESTS">Интересы</option>
+        <option value="EVENTS">События</option>
+      </select>
+      <label>О себе (необязательно, до 280 симв.)</label>
+      <textarea id="p-bio" maxlength="280"></textarea>
+      <label>Интересы (выбери 3-10)</label>
+      <div class="chip-grid" id="p-interests"></div>
+      <div class="btn-row">
+        <button class="btn btn-primary" id="p-save">Сохранить анкету</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== SEARCH SCREEN ===== -->
+  <section id="screen-search" class="screen">
+    <div id="search-container"></div>
+  </section>
+
+  <!-- ===== CHAT SCREEN ===== -->
+  <section id="screen-chat" class="screen">
+    <div class="card" id="chat-card">
+      <div id="chat-empty" class="empty-state">
+        <div class="display">Чата пока нет</div>
+        <div>Найди совпадение во вкладке «Поиск» — чат откроется автоматически.</div>
+      </div>
+      <div id="chat-active" style="display:none">
+        <div class="chat-window" id="chat-window"></div>
+        <div class="chat-input-row">
+          <input type="text" id="chat-text" placeholder="Сообщение..." maxlength="4096" />
+          <button class="btn btn-primary" id="chat-send">→</button>
+        </div>
+        <div class="btn-row">
+          <button class="btn btn-ghost" id="chat-extend">⏳ Продлить на 24ч</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== STATUS SCREEN ===== -->
+  <section id="screen-status" class="screen">
+    <div class="card">
+      <h2 class="display" style="margin-top:0;font-size:18px;">Пульс сервиса</h2>
+      <div class="pulse-grid">
+        <div>
+          <div class="pulse-num" id="pulse-online">—</div>
+          <div class="pulse-label">онлайн сейчас</div>
+        </div>
+        <div>
+          <div class="pulse-num" id="pulse-newchats">—</div>
+          <div class="pulse-label">новых чатов за 10 мин</div>
+        </div>
+        <div>
+          <div class="pulse-num" id="pulse-active">—</div>
+          <div class="pulse-label">активны за 24ч</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<nav class="tabbar">
+  <button data-tab="profile"><span class="ic">📝</span>Анкета</button>
+  <button data-tab="search"><span class="ic">🔎</span>Поиск</button>
+  <button data-tab="chat"><span class="ic">💬</span>Чат</button>
+  <button data-tab="status"><span class="ic">📊</span>Статус</button>
+</nav>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const tg = window.Telegram?.WebApp;
+if (tg) { tg.ready(); tg.expand(); }
+const initData = tg?.initData || "";
+
+const INTERESTS = {
+  MUSIC:"🎵 Музыка", SPORT:"🏃 Спорт", WALKS:"🚶 Прогулки", CINEMA:"🎬 Кино",
+  GAMES:"🎮 Игры", DANCING:"💃 Танцы", FOOD:"🍜 Еда", BUSINESS:"💼 Бизнес",
+  IT:"💻 IT", ART:"🎨 Искусство", NIGHT_CITY:"🌃 Ночной город", TRAVEL:"✈️ Путешествия",
+  ADULT_18:"🔞 18+ знакомства", QUICK_MEETUPS:"⚡ Быстрые встречи", VOICE_CHAT:"🎙 Голосовое"
+};
+const GOAL_LABEL = {
+  COMMUNICATION:"Общение", DATE:"Свидание", INTIMATE:"Секс", REGULAR:"Регулярное",
+  FRIENDSHIP:"Дружба", INTERESTS:"Интересы", EVENTS:"События"
+};
+
+let selectedInterests = new Set();
+let searchQueue = [];
+
+function toast(msg){
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(()=>t.classList.remove('show'), 2200);
+}
+
+async function api(path, opts={}){
+  const res = await fetch(path, {
+    ...opts,
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Telegram-Init-Data': initData,
+      ...(opts.headers||{})
+    }
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(()=>({detail:res.statusText}));
+    throw new Error(err.detail || 'request_failed');
+  }
+  return res.status === 204 ? null : res.json();
+}
+
+// ---------- tabs ----------
+document.querySelectorAll('nav.tabbar button').forEach(btn=>{
+  btn.addEventListener('click', ()=>switchTab(btn.dataset.tab));
+});
+function switchTab(name){
+  document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+  document.querySelectorAll('nav.tabbar button').forEach(b=>b.classList.remove('active'));
+  document.getElementById('screen-'+name).classList.add('active');
+  document.querySelector(`nav.tabbar button[data-tab="${name}"]`).classList.add('active');
+  if (name==='search') loadCandidates();
+  if (name==='chat') loadChat();
+  if (name==='status') loadStatus();
+}
+
+// ---------- profile ----------
+function renderInterestChips(){
+  const wrap = document.getElementById('p-interests');
+  wrap.innerHTML = '';
+  Object.entries(INTERESTS).forEach(([code,label])=>{
+    const chip = document.createElement('div');
+    chip.className = 'chip' + (selectedInterests.has(code) ? ' selected' : '');
+    chip.textContent = label;
+    chip.onclick = ()=>{
+      if (selectedInterests.has(code)) selectedInterests.delete(code);
+      else if (selectedInterests.size < 10) selectedInterests.add(code);
+      renderInterestChips();
+    };
+    wrap.appendChild(chip);
+  });
+}
+renderInterestChips();
+
+async function loadProfile(){
+  try{
+    const me = await api('/webapp/me');
+    if (me.has_profile){
+      const p = me.profile;
+      document.getElementById('p-city').value = p.city || '';
+      document.getElementById('p-district').value = p.district || '';
+      document.getElementById('p-age').value = p.age || '';
+      document.getElementById('p-gender').value = p.gender;
+      document.getElementById('p-seeking').value = p.seeking_gender;
+      document.getElementById('p-goal').value = p.goal;
+      document.getElementById('p-bio').value = p.bio || '';
+      selectedInterests = new Set(p.interests || []);
+      renderInterestChips();
+    }
+  }catch(e){ console.warn(e); }
+}
+
+document.getElementById('p-save').addEventListener('click', async ()=>{
+  if (selectedInterests.size < 3){
+    toast('Выбери минимум 3 интереса');
+    return;
+  }
+  const payload = {
+    city: document.getElementById('p-city').value.trim(),
+    district: document.getElementById('p-district').value.trim() || null,
+    age: parseInt(document.getElementById('p-age').value, 10),
+    gender: document.getElementById('p-gender').value,
+    seeking_gender: document.getElementById('p-seeking').value,
+    goal: document.getElementById('p-goal').value,
+    bio: document.getElementById('p-bio').value.trim() || null,
+    interests: Array.from(selectedInterests)
+  };
+  if (!payload.city || !payload.age){
+    toast('Заполни город и возраст');
+    return;
+  }
+  try{
+    await api('/webapp/profile', {method:'POST', body: JSON.stringify(payload)});
+    toast('Анкета сохранена ✅');
+  }catch(e){ toast('Ошибка: ' + e.message); }
+});
+
+// ---------- search ----------
+async function loadCandidates(){
+  const container = document.getElementById('search-container');
+  container.innerHTML = '<div class="empty-state">Загрузка...</div>';
+  try{
+    searchQueue = await api('/webapp/candidates?limit=10');
+    renderNextCandidate();
+  }catch(e){
+    container.innerHTML = `<div class="empty-state"><div class="display">Сначала заполни анкету</div></div>`;
+  }
+}
+
+function renderNextCandidate(){
+  const container = document.getElementById('search-container');
+  if (!searchQueue.length){
+    container.innerHTML = `<div class="empty-state"><div class="display">Анкет пока нет</div>База живая и постоянно обновляется — загляни чуть позже.</div>`;
+    return;
+  }
+  const c = searchQueue[0];
+  const photo = `<div class="candidate-photo" style="display:flex;align-items:center;justify-content:center;color:#9a9588;font-size:13px;">${c.photo_file_id ? 'фото в Telegram-боте' : 'без фото'}</div>`;
+  container.innerHTML = `
+    <div class="card">
+      ${photo}
+      <div class="candidate-meta">
+        <div class="age-city">${c.age}, ${c.city}${c.district ? ' / '+c.district : ''}</div>
+        <div style="color:var(--muted);font-size:13px;margin-top:2px;">Цель: ${GOAL_LABEL[c.goal]||c.goal}</div>
+        ${c.bio ? `<div style="margin-top:8px;font-size:14px;">${c.bio}</div>` : ''}
+        <div style="margin-top:8px;">${(c.interests||[]).map(i=>`<span class="tag">${i}</span>`).join('')}</div>
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-ghost" id="btn-skip">➡️ Пропустить</button>
+        <button class="btn btn-primary" id="btn-like">❤️ Лайк</button>
+      </div>
+    </div>`;
+  document.getElementById('btn-skip').onclick = async ()=>{
+    await api('/webapp/skip/'+c.user_id, {method:'POST'});
+    searchQueue.shift();
+    renderNextCandidate();
+  };
+  document.getElementById('btn-like').onclick = async ()=>{
+    try{
+      const r = await api('/webapp/like/'+c.user_id, {method:'POST'});
+      searchQueue.shift();
+      if (r.matched){ toast('🎉 Это матч!'); switchTab('chat'); return; }
+      toast('Лайк отправлен ❤️');
+      renderNextCandidate();
+    }catch(e){ toast('Лимит лайков на сегодня исчерпан'); }
+  };
+}
+
+// ---------- chat ----------
+async function loadChat(){
+  const empty = document.getElementById('chat-empty');
+  const active = document.getElementById('chat-active');
+  try{
+    const c = await api('/webapp/chat');
+    if (!c.active){
+      empty.style.display='block'; active.style.display='none';
+      return;
+    }
+    empty.style.display='none'; active.style.display='block';
+    const win = document.getElementById('chat-window');
+    win.innerHTML = c.messages.map(m=>{
+      const mine = m.sender_id === window.__myUserId;
+      return `<div class="msg ${mine?'mine':'theirs'}">${escapeHtml(m.text)}</div>`;
+    }).join('');
+    win.scrollTop = win.scrollHeight;
+  }catch(e){ console.warn(e); }
+}
+function escapeHtml(s){ return s.replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+document.getElementById('chat-send').addEventListener('click', sendChatMessage);
+document.getElementById('chat-text').addEventListener('keydown', (e)=>{ if(e.key==='Enter') sendChatMessage(); });
+async function sendChatMessage(){
+  const input = document.getElementById('chat-text');
+  const text = input.value.trim();
+  if (!text) return;
+  try{
+    await api('/webapp/chat/message', {method:'POST', body: JSON.stringify({text})});
+    input.value='';
+    loadChat();
+  }catch(e){ toast('Не удалось отправить: ' + e.message); }
+}
+document.getElementById('chat-extend').addEventListener('click', async ()=>{
+  try{
+    const r = await api('/webapp/chat/extend', {method:'POST'});
+    toast(r.extended ? 'Чат продлён на 24ч ✅' : 'Ждём согласия собеседника');
+  }catch(e){ toast('Ошибка: ' + e.message); }
+});
+
+// ---------- status ----------
+async function loadStatus(){
+  try{
+    const p = await api('/webapp/pulse');
+    document.getElementById('pulse-online').textContent = p.online_now;
+    document.getElementById('pulse-newchats').textContent = p.new_chats_last_10_min;
+    document.getElementById('pulse-active').textContent = p.active_users_24h;
+  }catch(e){ console.warn(e); }
+}
+
+// ---------- init ----------
+(async function init(){
+  try{
+    const me = await api('/webapp/me');
+    window.__myUserId = me.id;
+  }catch(e){ console.warn('auth not ready', e); }
+  await loadProfile();
+  switchTab('profile');
+})();
+</script>
+</body>
+</html>
