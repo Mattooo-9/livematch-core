@@ -1,0 +1,12 @@
+{
+  "success": false,
+  "error": "HTTP Error 400: Bad Request",
+  "log": [
+    "=== LiveMatch Render Deploy ===",
+    "owners: [{'cursor': 'ZtfVqLbOVl4zNDlraDRyczczYjAyczcw', 'owner': {'email': 'mattoruddo@gmail.com', 'id': 'tea-d7ka349kh4rs73b02s70', 'name': \"\u041c\u0430\u0442\u0442\u043e's workspace\", 'type': 'team'}}]",
+    "Owner: tea-d7ka349kh4rs73b02s70",
+    "Creating PostgreSQL...",
+    "  [400] POST /postgres: {\"message\":\"cannot have more than one active free tier database\"}\n",
+    "FATAL: HTTP Error 400: Bad Request"
+  ]
+}
