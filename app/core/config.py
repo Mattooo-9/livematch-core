@@ -44,6 +44,8 @@ class Settings(BaseSettings):
 
     # --- AI module ---
     ANTHROPIC_API_KEY: str = ""
+    OPENROUTER_API_KEY: str = ""
+    OPENAI_API_KEY: str = ""
     AI_MODEL: str = "claude-sonnet-4-6"
 
     # --- Web app ---

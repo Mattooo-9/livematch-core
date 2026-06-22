@@ -1,14 +1,6 @@
 """
-AI module -- a separate service layer, strictly observational/advisory.
-
-Hard rules enforced by design here:
-- this module NEVER sends messages on behalf of a user
-- this module NEVER fabricates activity numbers shown to users (pulse numbers
-  come straight from metrics_service, untouched)
-- this module NEVER pretends to be a human in chat
-
-It produces: daily AIInsight reports, lightweight profile-improvement tips,
-interest suggestions, and event ideas -- all clearly advisory, all logged.
+AI module — observational/advisory only.
+Priority: OpenRouter → Anthropic → OpenAI → rule-based fallback.
 """
 from __future__ import annotations
 
@@ -21,22 +13,57 @@ from app.core.config import settings
 from app.models.metrics import AIInsight
 from app.services import metrics_service
 
-FALLBACK_NOTE = "(rule-based fallback -- set ANTHROPIC_API_KEY for richer AI analysis)"
+FALLBACK_NOTE = "(rule-based fallback)"
 
 
 def _rule_based_summary(metrics: dict) -> str:
     lines = [f"Отчёт за {date.today().isoformat()} {FALLBACK_NOTE}:"]
     lines.append(f"- Новых пользователей за 24ч: {metrics['new_users_24h']}")
     lines.append(f"- Активных за 24ч: {metrics['active_users_24h']}")
-    lines.append(f"- Лайков/матчей/чатов: {metrics['likes_24h']}/{metrics['matches_24h']}/{metrics['chats_24h']}")
+    lines.append(f"- Лайки/матчи/чаты: {metrics['likes_24h']}/{metrics['matches_24h']}/{metrics['chats_24h']}")
     lines.append(f"- Пустых чатов: {metrics['empty_chat_pct']}% | Продлений: {metrics['chat_extension_pct']}%")
-    lines.append(f"- Платных действий: {metrics['paid_actions_24h']} | Активированных рефералов: {metrics['referrals_activated_24h']}")
-    lines.append(f"- Средний risk_score: {metrics['avg_risk_score']} | spam_score: {metrics['avg_spam_score']}")
-    if metrics["empty_chat_pct"] and metrics["empty_chat_pct"] > 40:
-        lines.append("⚠️ Высокий процент пустых чатов -- проверить качество подбора и онбординг анкеты.")
-    if metrics["retention_d1_pct"] is not None and metrics["retention_d1_pct"] < 30:
-        lines.append("⚠️ Низкий retention D1 -- усилить первый день (быстрый первый матч, понятный онбординг).")
+    lines.append(f"- Платных действий: {metrics['paid_actions_24h']} | Рефералов: {metrics['referrals_activated_24h']}")
+    if metrics.get("empty_chat_pct", 0) > 40:
+        lines.append("⚠️ Высокий % пустых чатов — проверить качество матчинга.")
+    if metrics.get("retention_d1_pct") is not None and metrics["retention_d1_pct"] < 30:
+        lines.append("⚠️ Низкий retention D1 — улучшить онбординг.")
     return "\n".join(lines)
+
+
+PROMPT_TEMPLATE = (
+    "Ты product-аналитик дейтинг-сервиса LiveMatch Core. "
+    "На основе метрик за 24 часа дай краткий отчёт (5-8 строк, по-русски): "
+    "что работает, что ломается, что улучшить, где падает активность. "
+    "Метрики: {metrics}"
+)
+
+
+async def _call_openrouter(metrics: dict) -> str | None:
+    if not settings.OPENROUTER_API_KEY:
+        return None
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=25) as client:
+            resp = await client.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {settings.OPENROUTER_API_KEY}",
+                    "HTTP-Referer": "https://livematch.core",
+                    "X-Title": "LiveMatch Core",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": "google/gemini-flash-1.5",  # быстрая бесплатная модель на OpenRouter
+                    "messages": [{"role": "user", "content": PROMPT_TEMPLATE.format(
+                        metrics=json.dumps(metrics, ensure_ascii=False)
+                    )}],
+                    "max_tokens": 600,
+                },
+            )
+            resp.raise_for_status()
+            return resp.json()["choices"][0]["message"]["content"]
+    except Exception as e:
+        return f"(openrouter error: {e})"
 
 
 async def _call_anthropic(metrics: dict) -> str | None:
@@ -44,40 +71,48 @@ async def _call_anthropic(metrics: dict) -> str | None:
         return None
     try:
         import httpx
-
-        prompt = (
-            "Ты product-аналитик дейтинг-сервиса LiveMatch Core. "
-            "На основе метрик за последние 24 часа дай краткий отчёт (5-8 строк, по-русски): "
-            "что работает, что ломается, что улучшить, где падает активность, что изменить в алгоритме. "
-            f"Метрики: {json.dumps(metrics, ensure_ascii=False)}"
-        )
-        async with httpx.AsyncClient(timeout=20) as client:
+        async with httpx.AsyncClient(timeout=25) as client:
             resp = await client.post(
                 "https://api.anthropic.com/v1/messages",
-                headers={
-                    "x-api-key": settings.ANTHROPIC_API_KEY,
-                    "anthropic-version": "2023-06-01",
-                    "content-type": "application/json",
-                },
-                json={
-                    "model": settings.AI_MODEL,
-                    "max_tokens": 600,
-                    "messages": [{"role": "user", "content": prompt}],
-                },
+                headers={"x-api-key": settings.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json"},
+                json={"model": "claude-haiku-20240307", "max_tokens": 600,
+                      "messages": [{"role": "user", "content": PROMPT_TEMPLATE.format(metrics=json.dumps(metrics, ensure_ascii=False))}]},
             )
             resp.raise_for_status()
-            data = resp.json()
-            text_blocks = [b["text"] for b in data.get("content", []) if b.get("type") == "text"]
-            return "\n".join(text_blocks) if text_blocks else None
-    except Exception as e:  # noqa: BLE001 -- AI module must never crash the app
-        return f"(AI call failed: {e}; falling back to rule-based summary)"
+            return resp.json()["content"][0]["text"]
+    except Exception as e:
+        return f"(anthropic error: {e})"
+
+
+async def _call_openai(metrics: dict) -> str | None:
+    if not settings.OPENAI_API_KEY:
+        return None
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=25) as client:
+            resp = await client.post(
+                "https://api.openai.com/v1/chat/completions",
+                headers={"Authorization": f"Bearer {settings.OPENAI_API_KEY}", "Content-Type": "application/json"},
+                json={"model": "gpt-4o-mini", "max_tokens": 600,
+                      "messages": [{"role": "user", "content": PROMPT_TEMPLATE.format(metrics=json.dumps(metrics, ensure_ascii=False))}]},
+            )
+            resp.raise_for_status()
+            return resp.json()["choices"][0]["message"]["content"]
+    except Exception as e:
+        return f"(openai error: {e})"
+
+
+async def _get_ai_summary(metrics: dict) -> str:
+    for fn in (_call_openrouter, _call_anthropic, _call_openai):
+        result = await fn(metrics)
+        if result and "error" not in result:
+            return result
+    return _rule_based_summary(metrics)
 
 
 async def generate_daily_insight(session: AsyncSession) -> AIInsight:
     metrics = await metrics_service.daily_aggregate_metrics(session)
-    ai_summary = await _call_anthropic(metrics)
-    summary = ai_summary if (ai_summary and "AI call failed" not in ai_summary) else _rule_based_summary(metrics)
-
+    summary = await _get_ai_summary(metrics)
     insight = AIInsight(report_date=date.today(), summary=summary[:4000], details_json=json.dumps(metrics)[:8000])
     session.add(insight)
     await session.flush()
@@ -85,7 +120,6 @@ async def generate_daily_insight(session: AsyncSession) -> AIInsight:
 
 
 def suggest_interests_for_goal(goal: str) -> list[str]:
-    """Simple heuristic interest suggestions -- no ML needed for an honest hint."""
     mapping = {
         "DATE": ["FOOD", "WALKS", "CINEMA"],
         "FRIENDSHIP": ["SPORT", "GAMES", "TRAVEL"],
