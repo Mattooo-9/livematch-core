@@ -1,0 +1,58 @@
+databases:
+  - name: livematch-db
+    databaseName: livematch
+    user: livematch
+    plan: free
+
+services:
+  - type: web
+    name: livematch-api
+    plan: free
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerCommand: uvicorn app.api.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: ADMIN_TG_IDS
+        value: "8017348770"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: livematch-db
+          property: connectionString
+      - key: REDIS_URL
+        sync: false
+      - key: BOT_USE_WEBHOOK
+        value: "true"
+      - key: BOT_WEBHOOK_SECRET
+        generateValue: true
+      - key: BOT_WEBHOOK_URL
+        sync: false
+      - key: SECRET_KEY
+        generateValue: true
+      - key: ADMIN_API_TOKEN
+        generateValue: true
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: RUN_SCHEDULER_IN_API
+        value: "false"
+
+  - type: worker
+    name: livematch-bot
+    plan: free
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerCommand: python scripts/run_bot.py
+    envVars:
+      - fromGroup: livematch-env
+
+  - type: worker
+    name: livematch-worker
+    plan: free
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerCommand: python run_worker.py
+    envVars:
+      - fromGroup: livematch-env
