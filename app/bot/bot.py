@@ -44,3 +44,12 @@ def get_dispatcher() -> Dispatcher:
         _dp.update.middleware(DbSessionMiddleware())
         _dp.include_router(build_root_router())
     return _dp
+
+
+async def run_polling():
+    import logging
+    logging.basicConfig(level=logging.INFO)
+    bot = get_bot()
+    dp = get_dispatcher()
+    await bot.delete_webhook(drop_pending_updates=True)
+    await dp.start_polling(bot)

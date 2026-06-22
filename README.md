@@ -1,193 +1,188 @@
 # LiveMatch Core
 
-Честный Telegram-бот знакомств: подбор по цели, району и интересам, без бесконечной ленты,
-без перекоса внимания, без платного преимущества в привлекательности.
+Честный живой сервис знакомств. Telegram-бот + Mini App + FastAPI backend.
 
-Интерфейс: Telegram-бот (aiogram 3) + Telegram Mini App (vanilla JS, отдаётся тем же backend'ом).
-Backend: FastAPI + PostgreSQL + Redis + SQLAlchemy/Alembic. Деплой: Docker/docker-compose.
+**Стек:** Python 3.11, aiogram 3, FastAPI, PostgreSQL, Redis, SQLAlchemy, Alembic, Docker
 
 ---
 
-## 1. Быстрый старт (локально, Docker)
+## Быстрый старт (Docker)
 
 ```bash
-cp .env.example .env
-# открой .env и подставь BOT_TOKEN (получить у @BotFather: /newbot)
-
-docker compose up --build
+git clone <repo> && cd livematch-core
+cp .env.example .env          # заполни BOT_TOKEN и ADMIN_TG_IDS
+make run                      # docker compose up --build
 ```
 
-Это поднимет: `db` (Postgres), `redis`, `migrate` (применит миграции и сидинг справочников один раз),
-`api` (FastAPI на :8000), `bot` (long polling), `worker` (фоновые задачи: закрытие просроченных чатов,
-ежедневный AIInsight).
+После старта:
+- API: http://localhost:8000
+- Healthcheck: http://localhost:8000/health
+- Mini App: http://localhost:8000/app
 
-Проверка:
-- `curl http://localhost:8000/health` → `{"status":"ok",...}`
-- Mini App: `http://localhost:8000/app` (для реального теста открывается внутри Telegram через кнопку бота)
-- В Telegram: найди своего бота → `/start` → `📝 Создать анкету` → `🔎 Искать` → лайк → матч → чат
+---
 
-## 2. Быстрый старт (без Docker, для разработки)
+## Локальный запуск (без Docker)
 
 ```bash
-make venv          # создаёт .venv, ставит зависимости
-cp .env.example .env
-# DATABASE_URL в .env замени на sqlite+aiosqlite:///./dev.db для совсем локального теста
-# либо подними Postgres/Redis сам (docker compose up db redis)
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements-dev.txt
+cp .env.example .env          # заполни DATABASE_URL, REDIS_URL, BOT_TOKEN, ADMIN_TG_IDS
 
-make migrate        # применить миграции
-make api             # FastAPI с автоперезагрузкой, :8000
-make bot              # long polling, в отдельном терминале
-make worker           # фоновые задачи, в отдельном терминале
-make test              # pytest, 17 сценариев на sqlite
-make lint                # ruff
+# применить миграции
+alembic upgrade head
+
+# запустить API
+make api
+
+# в отдельном терминале — бот (long polling, для разработки)
+make bot
+
+# фоновый воркер (sweep чатов + AI инсайты)
+make worker
 ```
 
-## 3. Что нужно от тебя, чтобы всё реально заработало
+---
 
-| Что | Где взять | Обязательно? |
+## Переменные окружения
+
+| Переменная | Обязательна | Описание |
 |---|---|---|
-| `BOT_TOKEN` | [@BotFather](https://t.me/BotFather) → `/newbot` | да |
-| `ADMIN_TG_IDS` | свой Telegram numeric id (например через [@userinfobot](https://t.me/userinfobot)) | да, для `/admin_report` |
-| `ANTHROPIC_API_KEY` | console.anthropic.com | нет — без него AIInsight использует rule-based fallback |
-| Домен + TLS (для вебхука и оплаты на проде) | твой хостинг | да, для продакшна (не нужно для polling-режима локально) |
-| Stripe/LiqPay/Fondy/WayForPay ключи | соответствующие кабинеты | нет — Telegram Stars работает без них |
+| `BOT_TOKEN` | ✅ | Токен @BotFather |
+| `ADMIN_TG_IDS` | ✅ | Telegram ID через запятую |
+| `DATABASE_URL` | ✅ | postgresql+asyncpg://... |
+| `REDIS_URL` | ✅ | redis://... |
+| `BOT_WEBHOOK_URL` | prod | https://yourdomain.com |
+| `BOT_USE_WEBHOOK` | prod | true |
+| `BOT_WEBHOOK_SECRET` | prod | случайная строка |
+| `ANTHROPIC_API_KEY` | нет | для AI-инсайтов |
+| `TELEGRAM_PAYMENTS_PROVIDER_TOKEN` | нет | для Stars (пустая строка = Stars XTR) |
 
-Telegram Stars (оплата `⭐`) работает из коробки, без отдельного провайдер-токена — это требование Telegram.
-
----
-
-## 4. Архитектура
-
-```
-app/
-  core/        # config, db, redis, enums, telegram_auth (HMAC-валидация WebApp initData)
-  models/      # 21 SQLAlchemy-модель (User, Profile, Photo, Interest, Like, Match, Chat, Message,
-               # Payment, Referral, EventLog, ActivityScore, Verification, Community, Contest,
-               # SystemMetric, AIInsight, ModerationQueueItem и связи)
-  services/    # вся бизнес-логика: matching, chat, like, payment, referral, verification,
-               # moderation (антиспам/антифрод), community, contest, metrics, ai_insight
-  payments/    # PaymentProvider интерфейс + Telegram Stars (рабочий) + Stripe/LiqPay/Fondy/
-               # WayForPay (интерфейс готов, реальные вызовы — TODO, см. ниже)
-  bot/         # aiogram: handlers, keyboards, FSM states, middlewares
-  api/         # FastAPI: webhook, payments webhook, admin REST, community/events, webapp API
-  tasks/       # фоновый scheduler: sweep просроченных чатов + ежедневный AIInsight
-webapp/static/ # Telegram Mini App (один HTML-файл, vanilla JS, без сборки)
-migrations/    # Alembic: схема (21 таблица) + сидинг 15 интересов / 15 комьюнити / 2 события
-tests/         # pytest, 17 сценариев на sqlite (matching, chat TTL, payments, referral antifraud, antispam)
-```
-
-### Состояния пользователя
-`NEW → PROFILE_CREATION → VERIFICATION → ACTIVE_SEARCH ⇄ ACTIVE_CHAT/BUFFER_MATCH ⇄ PAUSE`,
-плюс `INACTIVE`, `LIMITED`, `BANNED_BY_SYSTEM` — все как enum в `app/core/enums.py`.
-
-### Алгоритм подбора (`app/services/matching_service.py`)
-Город + цель + взаимная совместимость по полу — обязательные фильтры. Дальше скоринг:
-overlap интересов, активность за последние 7 дней, штраф за уже большое входящее внимание
-(`incoming_counter` за скользящее окно), буст тем, у кого давно не было диалога.
-**Нигде не читается `Payment`/`is_paid`** — это закреплено отдельным тестом
-(`tests/test_payment_and_limits.py::test_payment_never_influences_matching_score`).
-
-### Чаты (`app/services/chat_service.py`)
-1 активный чат + буфер на пользователя (FIFO, если матчей больше чем слотов — см. комментарий в коде).
-24ч TTL, продление только при обоюдном согласии (бесплатно) либо мгновенно за ⭐ (платная фича).
-Просрочка и неактивность закрываются фоновым воркером каждые 5 минут.
-
-### Безопасность
-- Антиспам: rate-limit сообщений/мин, лимит одинаковых сообщений, авто-мут — всё в Redis.
-- Фото: SHA-256 + perceptual hash (`ImageHash`), дубликаты помечаются.
-- Верификация: жест-челлендж + фото/видео-ответ. **Честно про объём**: это не биометрия и не
-  ML-проверка живости — рабочий MVP-эвристик (см. docstring в `verification_service.py`),
-  для продакшна стоит подключить специализированного вендора liveness-проверки.
-- Risk-keywords (предоплата, крипта, "секс за деньги" и т.п.) детектятся regex'ом, пишутся
-  в `risk_score`, уходят в `moderation_queue` — **никогда не банят автоматически**.
-- Скрытая кнопка "🚨 опасность/мошенничество" — тоже только в `moderation_queue`, не авто-бан.
-
-### AI-модуль (`app/services/ai_insight_service.py`)
-Реальный вызов Anthropic API (`api.anthropic.com`), если задан `ANTHROPIC_API_KEY` — иначе
-честный rule-based fallback на тех же метриках. AI **никогда** не пишет сообщения за пользователя
-и не накручивает показатели — пульс сервиса (`/status`) берёт цифры напрямую из БД/Redis, AI их не трогает.
+Полный список — в `.env.example`.
 
 ---
 
-## 5. Деплой на хостинг
+## Деплой на Railway / Render / Fly.io (бесплатный тир)
 
-### Render / Railway / Fly.io (Docker-based)
-1. Запушь репозиторий в свой GitHub (см. раздел 7).
-2. Создай Postgres и Redis (managed addon, либо Railway/Render plugin).
-3. Создай Web Service из Dockerfile, env переменные — как в `.env.example`, `DATABASE_URL`/`REDIS_URL`
-   укажи на managed-инстансы.
-4. **Установи `BOT_USE_WEBHOOK=true` и `BOT_WEBHOOK_URL=https://<твой-домен>`** — тогда `api`-сервис
-   сам выставит вебхук при старте (см. `lifespan` в `app/api/main.py`). Отдельный `bot` long-polling
-   сервис в этом режиме не нужен — выключи его / не деплой.
-5. Запусти `worker` как отдельный сервис/процесс с командой `python scripts/run_worker.py`
-   (на Render это "Background Worker", на Railway — второй сервис из того же репо).
-6. Перед первым стартом примени миграции: `alembic upgrade head` (одноразовая Job/Release command).
+### Railway (рекомендуется, бесплатный тир есть)
 
-### VPS (свой сервер)
-```bash
-git clone <твой-репозиторий> && cd livematch-core
-cp .env.example .env  # заполни
-docker compose up -d --build
+1. Зарегистрируйся на https://railway.app
+2. "New Project" → "Deploy from GitHub repo"
+3. Добавь плагины **PostgreSQL** и **Redis** (через "+")
+4. Скопируй DATABASE_URL и REDIS_URL из Railway в переменные проекта
+5. Добавь все переменные из `.env.example`
+6. Railway автоматически обнаружит `Dockerfile` и задеплоит
+
+Для webhook режима:
 ```
-Для вебхука понадобится reverse-proxy с TLS (nginx/Caddy) перед портом 8000 и
-`BOT_USE_WEBHOOK=true` + `BOT_WEBHOOK_URL=https://твой-домен`. Без вебхука (`BOT_USE_WEBHOOK=false`,
-по умолчанию) бот работает через long polling — TLS не нужен, подходит для VPS без домена.
+BOT_USE_WEBHOOK=true
+BOT_WEBHOOK_URL=https://<твой-проект>.up.railway.app
+```
 
----
+### Render
 
-## 6. Тестовые сценарии
+1. https://render.com → "New Web Service" → подключи GitHub
+2. Build Command: `pip install -r requirements.txt && alembic upgrade head`
+3. Start Command: `uvicorn app.api.main:app --host 0.0.0.0 --port $PORT`
+4. Добавь Postgres (Render Managed) и Redis (Upstash бесплатный)
+
+### VPS (Fly.io / любой Docker-хост)
 
 ```bash
-make test
+# установи flyctl: https://fly.io/docs/getting-started/
+fly launch
+fly secrets import < .env
+fly deploy
 ```
-
-17 сценариев на sqlite (`tests/`):
-- профиль: валидация возраста, минимум 3 интереса
-- подбор: совместимость по полу, ранжирование по overlap интересов
-- лайк/матч/чат: создание матча при взаимном лайке, обязательность обоюдного продления,
-  автозакрытие просроченного чата + промоушен буфера
-- платежи: успешная активация фичи, **гарантия что оплата не влияет на ранжирование**
-- лимиты: дневной лимит лайков
-- рефералка: антифрод (самоприглашение, общий device fingerprint), валидное начисление
-- модерация: детект risk-keywords, детект спама одинаковых сообщений
-
-Ручной end-to-end сценарий (после `docker compose up`):
-`/start` → создать анкету → `🔎 Искать` → лайк двух тестовых аккаунтов друг на друга → матч →
-`💬 Открыть чат` → сообщение → `⏳ Продлить чат` → `📊 Статус сервиса` → `🔗 Рефералка` →
-`⭐ Платные возможности` → оплата тестовыми Stars → `/admin_report` (с твоим tg_id в `ADMIN_TG_IDS`).
 
 ---
 
-## 7. Запушить в свой GitHub
+## Архитектура
 
-У ассистента нет доступа к твоему GitHub-аккаунту, поэтому финальный пуш — твоими руками:
+```
+Telegram Bot (aiogram 3)
+    ↕ polling / webhook
+FastAPI
+    /webhook/telegram/{secret}   — входящие апдейты бота
+    /webhook/payments/{provider} — fiat-платежи (Stripe/LiqPay/Fondy/WayForPay)
+    /admin/*                     — REST-панель (X-Admin-Token)
+    /webapp/*                    — API для Mini App (X-Telegram-Init-Data)
+    /app                         — статика Mini App
+    /health                      — healthcheck
+
+Services
+    matching_service  — алгоритм подбора (активность, интересы, баланс внимания)
+    chat_service      — 24ч TTL, 1 активный + 1 буфер, взаимное продление
+    like_service      — лайки + дневной лимит + Redis-счётчик
+    moderation_service — антиспам (Redis), риск-слова, очередь модерации
+    verification_service — perceptual hash dedup + жест-верификация
+    payment_service   — Stars (рабочий) + Stripe/LiqPay/Fondy/WayForPay (интерфейс готов)
+    referral_service  — антифрод (device fingerprint, self-invite)
+    ai_insight_service — Anthropic API (или rule-based fallback)
+    metrics_service   — пульс сервиса + daily aggregate
+
+PostgreSQL (21 таблица) + Redis (эфемерные счётчики, онлайн-TTL)
+```
+
+---
+
+## Команды бота
+
+| Команда | Описание |
+|---|---|
+| `/start` | Старт / главное меню |
+| `/profile` | Создать / изменить анкету |
+| `/search` | Искать |
+| `/next` | Следующая анкета |
+| `/status` | Пульс сервиса |
+| `/pause` | Включить / выключить паузу |
+| `/verify` | Верификация (жест) |
+| `/referral` | Реферальная ссылка |
+| `/pay` | Платные возможности (Stars) |
+| `/community` | Комьюнити по интересам |
+| `/events` | Активные события |
+| `/help` | Справка |
+| `/admin_report` | Только для ADMIN_TG_IDS |
+
+---
+
+## Платежи
+
+**Telegram Stars** — работает из коробки, `TELEGRAM_PAYMENTS_PROVIDER_TOKEN` оставь пустым.
+
+**Stripe / LiqPay / Fondy / WayForPay** — интерфейс `PaymentProvider` реализован, API-вызовы
+помечены `TODO(production)` в `app/payments/*_provider.py`. Для активации:
+- Заполни ключи в `.env`
+- Реализуй `create_invoice()` и `verify_webhook()` в соответствующем провайдере
+
+---
+
+## Тесты
 
 ```bash
-cd livematch-core
-git init
-git add .
-git commit -m "LiveMatch Core: initial working MVP"
-git branch -M main
-git remote add origin https://github.com/<твой-юзернейм>/livematch-core.git
-git push -u origin main
+make test        # pytest -q  (17 тестов, in-memory SQLite, без внешних зависимостей)
 ```
-
-GitHub Actions (`.github/workflows/ci.yml`) после пуша сам прогонит lint + tests + docker build.
 
 ---
 
-## 8. Честно про ограничения текущего MVP (что доделать перед реальным продакшном)
+## Честность алгоритма
 
-- **Stripe/LiqPay/Fondy/WayForPay** — интерфейс (`app/payments/*_provider.py`) и webhook-роут готовы,
-  реальные запросы к их API — `TODO` в коде (нужны твои мерчант-ключи, которых нет у ассистента).
-  Telegram Stars работает полностью.
-- **Верификация** — эвристика (жест + фото-хеш), не настоящая биометрия/liveness-ML.
-- **FSM-хранилище бота** — Redis (`RedisStorage`), с fallback на in-memory, если Redis недоступен
-  (подходит для одного процесса, для нескольких реплик бота нужен реальный Redis).
-- **Мульти-инстанс масштабирование**: `worker` обязателен как отдельный процесс при >1 реплики `api`,
-  иначе фоновые задачи будут дублироваться (это уже учтено флагом `RUN_SCHEDULER_IN_API=false` в
-  `docker-compose.yml`).
-- **AI-инсайты** — реальный вызов Claude API, но при отсутствии ключа — rule-based fallback, не "фейковая" аналитика.
+Деньги **не покупают позицию в поиске**. Проверяется тестом:
 
-Всё остальное из ТЗ (модели, миграции, FSM, лайки/матчи/чаты, платежи Stars, рефералка с антифродом,
-антиспам, комьюнити, события, AIInsight, admin_report, mini-app, CI) — реализовано и покрыто тестами.
+```
+test_payment_never_influences_matching_score
+```
+
+Тест читает исходник `matching_service.py` и статически убеждается, что там нет
+никакого импорта или обращения к Payment/is_paid данным.
+
+---
+
+## Безопасность
+
+- Webhook защищён токеном в URL (`BOT_WEBHOOK_SECRET`)
+- Mini App: каждый запрос валидируется по HMAC-SHA256 `initData` от Telegram
+- Admin API: `X-Admin-Token` header
+- Фото: SHA256 + perceptual hash dedup (imagehash)
+- Антиспам: Redis rate limit (20 сообщений/мин) + дедупликация идентичных
+- Опасные сигналы → `moderation_queue`, **не автобан**
+- Секреты только через `.env`, не в коде
