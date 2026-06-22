@@ -11,21 +11,17 @@ GH_TOKEN = os.environ.get("GITHUB_TOKEN", "")
 BASE = "https://api.render.com/v1"
 log_lines = []
 
-def log(msg):
-    print(msg, flush=True)
-    log_lines.append(msg)
+def log(msg): print(msg, flush=True); log_lines.append(msg)
 
 def req(method, path, body=None, base=BASE, token=None, extra_headers=None):
     data = json.dumps(body).encode() if body else None
     t = token or T
     headers = {"Authorization": f"Bearer {t}", "Content-Type": "application/json", "Accept": "application/json"}
-    if extra_headers:
-        headers.update(extra_headers)
+    if extra_headers: headers.update(extra_headers)
     r = urllib.request.Request(base + path, data=data, method=method, headers=headers)
     try:
         with urllib.request.urlopen(r, timeout=30) as resp:
-            raw = resp.read()
-            return json.loads(raw) if raw.strip() else {}
+            raw = resp.read(); return json.loads(raw) if raw.strip() else {}
     except urllib.error.HTTPError as e:
         msg = e.read().decode()
         log(f"  [{e.code}] {method} {path}: {msg[:300]}")
@@ -34,76 +30,73 @@ def req(method, path, body=None, base=BASE, token=None, extra_headers=None):
         raise
 
 def write_status(data):
-    """Write deployment status back to GitHub repo so it's readable via API."""
-    if not GH_TOKEN:
-        return
+    if not GH_TOKEN: return
     content = base64.b64encode(json.dumps(data, indent=2).encode()).decode()
     try:
-        # Check existing SHA
         existing = req("GET", "/repos/Mattooo-9/livematch-core/contents/deployment-status.json",
-                      base="https://api.github.com",
-                      token=GH_TOKEN,
+                      base="https://api.github.com", token=GH_TOKEN,
                       extra_headers={"Authorization": f"token {GH_TOKEN}"})
         sha = existing.get("sha") if existing else None
-        body = {"message": "ci: update deployment status", "content": content, "branch": "main"}
-        if sha:
-            body["sha"] = sha
+        body = {"message": "ci: deployment status", "content": content, "branch": "main"}
+        if sha: body["sha"] = sha
         req("PUT", "/repos/Mattooo-9/livematch-core/contents/deployment-status.json",
             body=body, base="https://api.github.com", token=GH_TOKEN,
             extra_headers={"Authorization": f"token {GH_TOKEN}"})
-        log("  Status written to repo.")
-    except Exception as e:
-        log(f"  Could not write status: {e}")
+    except Exception as e: log(f"  status write failed: {e}")
 
 try:
     log("=== LiveMatch Render Deploy ===")
 
-    # 1. Owner
+    # Owner
     owners = req("GET", "/owners?limit=1")
-    log(f"owners: {str(owners)[:200]}")
-    if isinstance(owners, list) and owners:
-        owner_id = owners[0]["owner"]["id"]
-    else:
-        raise RuntimeError(f"Cannot parse owner: {owners}")
+    owner_id = owners[0]["owner"]["id"]
     log(f"Owner: {owner_id}")
 
-    # 2. Postgres
+    # ── Postgres: берём ЛЮБУЮ существующую free DB ──────────────────────────
     dbs = req("GET", "/postgres?limit=10")
+    log(f"Existing DBs: {[d.get('postgres',{}).get('name') for d in (dbs or [])]}")
+
     pg = None
-    for d in (dbs if isinstance(dbs, list) else []):
+    # Сначала ищем нашу по имени
+    for d in (dbs or []):
         if d.get("postgres", {}).get("name") == "livematch-db":
             pg = d["postgres"]; break
+    # Если нет - берём первую доступную (уже есть free db на аккаунте)
+    if not pg and dbs:
+        pg = dbs[0]["postgres"]
+        log(f"Using existing DB: {pg.get('name')} ({pg.get('id')})")
 
     if not pg:
-        log("Creating PostgreSQL...")
+        # Нет вообще никакой - пробуем создать (может у них удалена)
         r = req("POST", "/postgres", {
             "name":"livematch-db","databaseName":"livematch","databaseUser":"livematch",
             "plan":"free","region":"frankfurt","ownerId":owner_id,"version":"15"
         })
-        log(f"  pg create: {str(r)[:200]}")
-        if r and "_conflict" not in r:
-            pg = r.get("postgres", r)
-        else:
-            dbs2 = req("GET", "/postgres?limit=10")
-            for d in (dbs2 if isinstance(dbs2, list) else []):
-                if d.get("postgres", {}).get("name") == "livematch-db":
-                    pg = d["postgres"]; break
+        pg = r.get("postgres", r) if r and "_conflict" not in r else None
 
     if pg:
-        log(f"Postgres: {pg.get('id')} status={pg.get('status')}")
-        for _ in range(30):
+        pg_id = pg["id"]
+        for _ in range(25):
             if pg.get("status") == "available": break
             time.sleep(10)
-            r2 = req("GET", f"/postgres/{pg['id']}")
+            r2 = req("GET", f"/postgres/{pg_id}")
             if r2: pg = r2.get("postgres", r2)
             log(f"  pg status: {pg.get('status')}")
+
         ci = pg.get("connectionInfo", {})
         db_url = ci.get("internalConnectionString") or ci.get("externalConnectionString") or ""
         db_url = db_url.replace("postgres://","postgresql+asyncpg://").replace("postgresql://","postgresql+asyncpg://")
-        log(f"DB ready: {db_url[:40]}...")
+        # Render internal URLs: если пустой - строим из деталей
+        if not db_url:
+            db_info = pg.get("databaseName","livematch")
+            db_user = pg.get("databaseUser","livematch")
+            db_host = pg.get("host") or f"dpg-{pg_id}-a.frankfurt-postgres.render.com"
+            db_pass = ci.get("password","")
+            db_url = f"postgresql+asyncpg://{db_user}:{db_pass}@{db_host}/{db_info}"
+        log(f"DB URL: {db_url[:50]}...")
     else:
         db_url = "sqlite+aiosqlite:///./livematch.db"
-        log("Using SQLite fallback")
+        log("SQLite fallback")
 
     env = [
         {"key":"BOT_TOKEN","value":BOT_TOKEN},
@@ -118,7 +111,7 @@ try:
         {"key":"PYTHONUNBUFFERED","value":"1"},
     ]
 
-    # 3. Service
+    # ── Service ─────────────────────────────────────────────────────────────
     svcs = req("GET", "/services?limit=20")
     svc = None
     for s in (svcs if isinstance(svcs, list) else []):
@@ -126,11 +119,11 @@ try:
             svc = s["service"]; break
 
     if svc:
-        log(f"Service exists: {svc['id']}")
-        req("PUT", f"/services/{svc['id']}/env-vars", env)
-        req("POST", f"/services/{svc['id']}/deploys", {"clearCache":"do_not_clear"})
-        svc_url = f"https://livematch-core.onrender.com"
-        log(f"Redeploy triggered.")
+        sid = svc["id"]
+        log(f"Service exists: {sid}")
+        req("PUT", f"/services/{sid}/env-vars", env)
+        req("POST", f"/services/{sid}/deploys", {"clearCache":"do_not_clear"})
+        svc_url = f"https://{svc.get('serviceDetails',{}).get('url','livematch-core.onrender.com')}"
     else:
         log("Creating service...")
         r = req("POST", "/services", {
@@ -141,18 +134,19 @@ try:
                               "pullRequestPreviewsEnabled":"no","healthCheckPath":"/health"},
             "envVars":env,
         })
-        log(f"Service create: {str(r)[:300]}")
+        log(f"Create result: {str(r)[:300]}")
         svc_url = "https://livematch-core.onrender.com"
 
-    status = {"success": True, "log": log_lines,
-              "webapp": "https://mattooo-9.github.io/livematch-core/",
-              "api": "https://livematch-core.onrender.com",
-              "admin_api_token": ADMIN_TOKEN}
-    write_status(status)
-    log("✅ DONE")
+    write_status({
+        "success": True,
+        "webapp_url": "https://mattooo-9.github.io/livematch-core/",
+        "api_url": svc_url,
+        "admin_api_token": ADMIN_TOKEN,
+        "log": log_lines
+    })
+    log(f"✅ DEPLOYED → {svc_url}")
 
 except Exception as e:
-    log(f"FATAL: {e}")
-    traceback.print_exc()
+    log(f"FATAL: {e}"); traceback.print_exc()
     write_status({"success": False, "error": str(e), "log": log_lines})
     sys.exit(1)
