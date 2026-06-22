@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
+<title>LiveMatch Core</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{--paper:#FAF6EF;--ink:#1E2421;--teal:#1F4D44;--teal-deep:#143732;--line:#E4DCCB;--card:#fff;--muted:#74766F;--danger:#B6442B;--r:16px}
+*{box-sizing:border-box}html,body{margin:0;padding:0}
+body{background:var(--paper);color:var(--ink);font-family:'Inter',sans-serif;padding-bottom:84px;min-height:100vh}
+h1,h2,.display{font-family:'Fraunces',serif;font-weight:600}
+header{padding:20px 18px 12px;border-bottom:1px solid var(--line)}
+header .display{font-size:22px;margin:0;color:var(--teal-deep)}
+header p{margin:4px 0 0;color:var(--muted);font-size:13px}
+main{padding:16px;max-width:520px;margin:0 auto}
+.screen{display:none}.screen.active{display:block;animation:fade .2s ease}
+@keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:18px;margin-bottom:14px}
+label{display:block;font-size:13px;color:var(--muted);margin:14px 0 5px;font-weight:500}
+label:first-child{margin-top:0}
+input,textarea,select{width:100%;border:1px solid var(--line);border-radius:10px;padding:11px 12px;font-size:15px;font-family:inherit;background:#fff;color:var(--ink)}
+textarea{resize:vertical;min-height:56px}
+.row{display:flex;gap:10px}.row>*{flex:1}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px}
+.chip{border:1px solid var(--line);background:#fff;border-radius:999px;padding:7px 13px;font-size:13px;cursor:pointer;user-select:none;transition:.12s}
+.chip.on{background:var(--teal);border-color:var(--teal);color:#fff}
+.btn{display:flex;align-items:center;justify-content:center;gap:6px;border:none;border-radius:12px;padding:13px 18px;font-size:15px;font-weight:600;cursor:pointer;width:100%;font-family:inherit}
+.btn-p{background:var(--teal);color:#fff}.btn-p:active{background:var(--teal-deep)}
+.btn-g{background:transparent;border:1px solid var(--line);color:var(--ink)}
+.btn-row{display:flex;gap:10px;margin-top:14px}
+.photo-box{width:100%;aspect-ratio:4/5;border-radius:var(--r);background:var(--line);display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:13px;margin-bottom:4px}
+.age-city{font-family:'Fraunces',serif;font-size:20px}
+.tag{display:inline-block;background:var(--paper);border:1px solid var(--line);border-radius:999px;font-size:12px;padding:4px 10px;margin:4px 4px 0 0;color:var(--teal-deep)}
+.empty{text-align:center;padding:40px 10px;color:var(--muted)}
+.empty .display{color:var(--ink);font-size:18px;margin-bottom:8px}
+.pulse-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.pulse-num{font-family:'Fraunces',serif;font-size:32px;color:var(--teal-deep)}
+.pulse-lbl{font-size:12px;color:var(--muted);margin-top:2px}
+.chat-win{height:48vh;overflow-y:auto;display:flex;flex-direction:column;gap:8px;padding:4px 0}
+.msg{max-width:78%;padding:9px 13px;border-radius:14px;font-size:14px;line-height:1.35}
+.msg.me{align-self:flex-end;background:var(--teal);color:#fff;border-bottom-right-radius:4px}
+.msg.them{align-self:flex-start;background:#fff;border:1px solid var(--line);border-bottom-left-radius:4px}
+.msg-row{display:flex;gap:8px;margin-top:10px}.msg-row input{flex:1}.msg-row button{width:auto;padding:11px 16px}
+nav{position:fixed;bottom:0;left:0;right:0;display:flex;background:#fff;border-top:1px solid var(--line);padding:8px 6px calc(8px + env(safe-area-inset-bottom))}
+nav button{flex:1;background:none;border:none;font-family:inherit;font-size:11px;color:var(--muted);display:flex;flex-direction:column;align-items:center;gap:3px;padding:6px 2px;cursor:pointer}
+nav button .ic{font-size:20px}
+nav button.on{color:var(--teal-deep);font-weight:600}
+.toast{position:fixed;left:50%;bottom:96px;transform:translateX(-50%);background:var(--ink);color:#fff;padding:10px 16px;border-radius:10px;font-size:13px;opacity:0;pointer-events:none;transition:.2s;z-index:99}
+.toast.show{opacity:1}
+.loader{text-align:center;padding:30px;color:var(--muted);font-size:14px}
+</style>
+</head>
+<body>
+<header>
+  <h1 class="display">LiveMatch Core</h1>
+  <p>Поиск по цели, району и интересам — честно.</p>
+</header>
+<main>
+
+<section id="s-profile" class="screen">
+<div class="card">
+  <label>Город</label><input id="p-city" placeholder="Киев"/>
+  <label>Район (необязательно)</label><input id="p-district" placeholder="Подол"/>
+  <div class="row">
+    <div><label>Возраст</label><input id="p-age" type="number" min="18" max="99"/></div>
+    <div><label>Пол</label>
+      <select id="p-gender">
+        <option value="MALE">Мужчина</option>
+        <option value="FEMALE">Женщина</option>
+        <option value="OTHER">Другое</option>
+      </select>
+    </div>
+  </div>
+  <label>Кого ищешь</label>
+  <select id="p-seek">
+    <option value="MALE">Мужчин</option><option value="FEMALE">Женщин</option><option value="ANY">Неважно</option>
+  </select>
+  <label>Цель</label>
+  <select id="p-goal">
+    <option value="COMMUNICATION">Общение</option><option value="DATE">Свидание</option>
+    <option value="INTIMATE">Секс</option><option value="REGULAR">Регулярное</option>
+    <option value="FRIENDSHIP">Дружба</option><option value="INTERESTS">Интересы</option>
+    <option value="EVENTS">События</option>
+  </select>
+  <label>О себе (до 280 символов)</label>
+  <textarea id="p-bio" maxlength="280"></textarea>
+  <label>Интересы (3-10)</label>
+  <div class="chips" id="interest-chips"></div>
+  <div class="btn-row"><button class="btn btn-p" id="save-profile">Сохранить анкету</button></div>
+</div>
+</section>
+
+<section id="s-search" class="screen">
+  <div id="search-wrap"></div>
+</section>
+
+<section id="s-chat" class="screen">
+<div class="card">
+  <div id="chat-empty" class="empty">
+    <div class="display">Чат ещё не открыт</div>
+    Найди совпадение во вкладке Поиск.
+  </div>
+  <div id="chat-body" style="display:none">
+    <div class="chat-win" id="chat-win"></div>
+    <div class="msg-row">
+      <input id="chat-in" placeholder="Сообщение..." maxlength="4096"/>
+      <button class="btn btn-p" id="chat-send">→</button>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-g" id="chat-extend">⏳ Продлить на 24ч</button>
+    </div>
+  </div>
+</div>
+</section>
+
+<section id="s-status" class="screen">
+<div class="card">
+  <h2 class="display" style="margin-top:0;font-size:18px">Пульс сервиса</h2>
+  <div class="pulse-grid">
+    <div><div class="pulse-num" id="p-online">—</div><div class="pulse-lbl">онлайн сейчас</div></div>
+    <div><div class="pulse-num" id="p-chats">—</div><div class="pulse-lbl">новых чатов / 10 мин</div></div>
+    <div><div class="pulse-num" id="p-active">—</div><div class="pulse-lbl">активны за 24ч</div></div>
+  </div>
+</div>
+</section>
+
+</main>
+
+<nav>
+  <button data-tab="profile"><span class="ic">📝</span>Анкета</button>
+  <button data-tab="search"><span class="ic">🔎</span>Поиск</button>
+  <button data-tab="chat"><span class="ic">💬</span>Чат</button>
+  <button data-tab="status"><span class="ic">📊</span>Статус</button>
+</nav>
+<div class="toast" id="toast"></div>
+
+<script>
+// ── CONFIG ──────────────────────────────────────────────
+const API = 'https://livematch-core.onrender.com';
+// ────────────────────────────────────────────────────────
+
+const tg = window.Telegram?.WebApp;
+if(tg){tg.ready();tg.expand();}
+const initData = tg?.initData || '';
+
+const INTERESTS = {
+  MUSIC:'🎵 Музыка',SPORT:'🏃 Спорт',WALKS:'🚶 Прогулки',CINEMA:'🎬 Кино',
+  GAMES:'🎮 Игры',DANCING:'💃 Танцы',FOOD:'🍜 Еда',BUSINESS:'💼 Бизнес',
+  IT:'💻 IT',ART:'🎨 Искусство',NIGHT_CITY:'🌃 Ночной город',TRAVEL:'✈️ Путешествия',
+  ADULT_18:'🔞 18+',QUICK_MEETUPS:'⚡ Быстрые встречи',VOICE_CHAT:'🎙 Голосовое'
+};
+const GOAL={COMMUNICATION:'Общение',DATE:'Свидание',INTIMATE:'Секс',REGULAR:'Регулярное',FRIENDSHIP:'Дружба',INTERESTS:'Интересы',EVENTS:'События'};
+
+let sel=new Set(), queue=[], myId=null;
+
+function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2400);}
+
+async function api(path,opts={}){
+  const r=await fetch(API+path,{...opts,headers:{'Content-Type':'application/json','X-Telegram-Init-Data':initData,...(opts.headers||{})}});
+  if(!r.ok){const e=await r.json().catch(()=>({detail:r.statusText}));throw new Error(e.detail||'err');}
+  return r.status===204?null:r.json();
+}
+
+// tabs
+document.querySelectorAll('nav button').forEach(b=>b.addEventListener('click',()=>go(b.dataset.tab)));
+function go(name){
+  document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+  document.querySelectorAll('nav button').forEach(b=>b.classList.remove('on'));
+  document.getElementById('s-'+name).classList.add('active');
+  document.querySelector(`nav button[data-tab="${name}"]`).classList.add('on');
+  if(name==='search')loadSearch();
+  if(name==='chat')loadChat();
+  if(name==='status')loadStatus();
+}
+
+// interests chips
+function renderChips(){
+  const w=document.getElementById('interest-chips');w.innerHTML='';
+  Object.entries(INTERESTS).forEach(([c,l])=>{
+    const d=document.createElement('div');
+    d.className='chip'+(sel.has(c)?' on':'');d.textContent=l;
+    d.onclick=()=>{sel.has(c)?sel.delete(c):sel.size<10&&sel.add(c);renderChips();};
+    w.appendChild(d);
+  });
+}
+renderChips();
+
+// load profile
+async function loadProfile(){
+  try{
+    const me=await api('/webapp/me');myId=me.id;
+    if(me.has_profile){
+      const p=me.profile;
+      document.getElementById('p-city').value=p.city||'';
+      document.getElementById('p-district').value=p.district||'';
+      document.getElementById('p-age').value=p.age||'';
+      document.getElementById('p-gender').value=p.gender;
+      document.getElementById('p-seek').value=p.seeking_gender;
+      document.getElementById('p-goal').value=p.goal;
+      document.getElementById('p-bio').value=p.bio||'';
+      sel=new Set(p.interests||[]);renderChips();
+    }
+  }catch(e){console.warn('profile load:',e);}
+}
+
+document.getElementById('save-profile').onclick=async()=>{
+  if(sel.size<3){toast('Выбери минимум 3 интереса');return;}
+  const age=parseInt(document.getElementById('p-age').value,10);
+  const city=document.getElementById('p-city').value.trim();
+  if(!city||!age){toast('Заполни город и возраст');return;}
+  try{
+    await api('/webapp/profile',{method:'POST',body:JSON.stringify({
+      city,district:document.getElementById('p-district').value.trim()||null,age,
+      gender:document.getElementById('p-gender').value,
+      seeking_gender:document.getElementById('p-seek').value,
+      goal:document.getElementById('p-goal').value,
+      bio:document.getElementById('p-bio').value.trim()||null,
+      interests:Array.from(sel)
+    })});
+    toast('Анкета сохранена ✅');
+  }catch(e){toast('Ошибка: '+e.message);}
+};
+
+// search
+async function loadSearch(){
+  const w=document.getElementById('search-wrap');
+  w.innerHTML='<div class="loader">Загрузка...</div>';
+  try{queue=await api('/webapp/candidates?limit=10');showCandidate();}
+  catch(e){w.innerHTML='<div class="empty"><div class="display">Сначала заполни анкету</div></div>';}
+}
+function showCandidate(){
+  const w=document.getElementById('search-wrap');
+  if(!queue.length){w.innerHTML='<div class="empty"><div class="display">Пока никого нет</div>Заходи позже — база живая.</div>';return;}
+  const c=queue[0];
+  w.innerHTML=`<div class="card">
+    <div class="photo-box">${c.photo_file_id?'фото в боте':'нет фото'}</div>
+    <div style="padding:12px 2px 4px">
+      <div class="age-city">${c.age}, ${c.city}${c.district?' / '+c.district:''}</div>
+      <div style="color:var(--muted);font-size:13px;margin-top:2px">Цель: ${GOAL[c.goal]||c.goal}</div>
+      ${c.bio?`<div style="margin-top:8px;font-size:14px">${c.bio}</div>`:''}
+      <div style="margin-top:8px">${(c.interests||[]).map(i=>`<span class="tag">${i}</span>`).join('')}</div>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-g" id="b-skip">➡️ Пропустить</button>
+      <button class="btn btn-p" id="b-like">❤️ Лайк</button>
+    </div>
+  </div>`;
+  document.getElementById('b-skip').onclick=async()=>{
+    await api('/webapp/skip/'+c.user_id,{method:'POST'}).catch(()=>{});
+    queue.shift();showCandidate();
+  };
+  document.getElementById('b-like').onclick=async()=>{
+    try{
+      const r=await api('/webapp/like/'+c.user_id,{method:'POST'});
+      queue.shift();
+      if(r.matched){toast('🎉 Матч!');go('chat');return;}
+      toast('Лайк отправлен ❤️');showCandidate();
+    }catch(e){toast('Лимит лайков исчерпан');}
+  };
+}
+
+// chat
+async function loadChat(){
+  try{
+    const c=await api('/webapp/chat');
+    const empty=document.getElementById('chat-empty');
+    const body=document.getElementById('chat-body');
+    if(!c.active){empty.style.display='block';body.style.display='none';return;}
+    empty.style.display='none';body.style.display='block';
+    const win=document.getElementById('chat-win');
+    win.innerHTML=c.messages.map(m=>`<div class="msg ${m.sender_id===myId?'me':'them'}">${esc(m.text)}</div>`).join('');
+    win.scrollTop=win.scrollHeight;
+  }catch(e){console.warn(e);}
+}
+function esc(s){return s.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+
+document.getElementById('chat-send').onclick=sendMsg;
+document.getElementById('chat-in').onkeydown=e=>e.key==='Enter'&&sendMsg();
+async function sendMsg(){
+  const inp=document.getElementById('chat-in');
+  const text=inp.value.trim();if(!text)return;
+  try{await api('/webapp/chat/message',{method:'POST',body:JSON.stringify({text})});inp.value='';loadChat();}
+  catch(e){toast('Ошибка: '+e.message);}
+}
+document.getElementById('chat-extend').onclick=async()=>{
+  try{const r=await api('/webapp/chat/extend',{method:'POST'});toast(r.extended?'Чат продлён ✅':'Ждём согласия собеседника');}
+  catch(e){toast('Ошибка');}
+};
+
+// status
+async function loadStatus(){
+  try{
+    const p=await api('/webapp/pulse');
+    document.getElementById('p-online').textContent=p.online_now;
+    document.getElementById('p-chats').textContent=p.new_chats_last_10_min;
+    document.getElementById('p-active').textContent=p.active_users_24h;
+  }catch(e){console.warn(e);}
+}
+
+// init
+loadProfile().then(()=>go('profile'));
+</script>
+</body>
+</html>
