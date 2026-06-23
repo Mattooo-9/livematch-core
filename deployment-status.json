@@ -1,21 +1,15 @@
 {
-  "success": true,
-  "api_url": "https://livematch-core.onrender.com",
-  "webapp_url": "https://mattooo-9.github.io/livematch-core/",
-  "admin_token": "livematch-admin-token-8017348770",
-  "db_url_preview": "",
+  "success": false,
+  "error": "Could not get Koyeb token automatically. Please: 1) Go to https://app.koyeb.com/user/settings/api 2) Create a token 3) Add as KOYEB_TOKEN GitHub secret 4) Re-run this workflow",
   "log": [
-    "=== LiveMatch Deploy ===",
-    "Render owner: tea-d7ka349kh4rs73b02s70",
-    "Using existing DB: food-mafia-db (dpg-d8l9hpbtqb8s73avd4b0-a) status=available",
-    "DB ready: ...",
-    "Creating new Render service...",
-    "Render requires billing info. Using Skyvern to add card via browser...",
-    "  Skyvern task tsk_543408825135769342 started",
-    "    Skyvern status: running",
-    "    Skyvern status: completed",
-    "  Skyvern billing task completed, retrying service creation...",
-    "  Retry result: {'_billing': True, 'body': '{\"message\":\"Payment information is required to complete this request. To add a card, visit https://dashboard.render.com/billing\"}\\n'}",
-    "Service create result: {'_billing': True, 'body': '{\"message\":\"Payment information is required to complete this request. To add a card, visit https://dashboard.render.com/billing\"}\\n'}"
+    "=== LiveMatch Core \u2192 Koyeb Deploy ===",
+    "Getting Koyeb token via Skyvern...",
+    "  Skyvern task: tsk_543409982940125586",
+    "    [running] None",
+    "    [running] None",
+    "    [completed] None",
+    "  Extracted: [{}]",
+    "  No token extracted",
+    "FATAL: Could not get Koyeb token automatically. Please: 1) Go to https://app.koyeb.com/user/settings/api 2) Create a token 3) Add as KOYEB_TOKEN GitHub secret 4) Re-run this workflow"
   ]
 }
