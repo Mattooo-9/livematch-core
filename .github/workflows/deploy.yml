@@ -1,29 +1,55 @@
-name: Deploy via Skyvern + Render
+name: Deploy LiveMatch Core
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
 
 jobs:
-  deploy:
+  test:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: {python-version: "3.11"}
+      - run: pip install -q -r requirements-dev.txt
+      - run: DATABASE_URL="sqlite+aiosqlite:///:memory:" BOT_TOKEN="123:test" python -m pytest -q
 
-      - name: Install deps
-        run: pip install -q requests
+  build-and-deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
 
-      - name: Deploy via Skyvern browser automation + Render API
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ghcr.io/mattooo-9/livematch-core:latest
+
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.11"}
+      - run: pip install -q requests
+
+      - name: Deploy to Koyeb
         env:
-          GITHUB_TOKEN:        ${{ secrets.GITHUB_TOKEN }}
-          RENDER_TOKEN:        ${{ secrets.RENDER_TOKEN }}
-          BOT_TOKEN:           ${{ secrets.BOT_TOKEN }}
-          ADMIN_TG_IDS:        ${{ secrets.ADMIN_TG_IDS }}
-          OPENROUTER_API_KEY:  ${{ secrets.OPENROUTER_API_KEY }}
-          SECRET_KEY:          ${{ secrets.SECRET_KEY }}
-          ADMIN_API_TOKEN:     ${{ secrets.ADMIN_API_TOKEN }}
-          SKYVERN_API_KEY:     ${{ secrets.SKYVERN_API_KEY }}
+          GITHUB_TOKEN:       ${{ secrets.GITHUB_TOKEN }}
+          BOT_TOKEN:          ${{ secrets.BOT_TOKEN }}
+          ADMIN_TG_IDS:       ${{ secrets.ADMIN_TG_IDS }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          SECRET_KEY:         ${{ secrets.SECRET_KEY }}
+          ADMIN_API_TOKEN:    ${{ secrets.ADMIN_API_TOKEN }}
+          KOYEB_TOKEN:        ${{ secrets.KOYEB_TOKEN }}
+          SKYVERN_API_KEY:    ${{ secrets.SKYVERN_API_KEY }}
         run: python .github/scripts/deploy_full.py
