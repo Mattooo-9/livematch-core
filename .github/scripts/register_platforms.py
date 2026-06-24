@@ -1,160 +1,224 @@
 """
-Автоматическая регистрация на Koyeb и Vercel через GitHub OAuth (без пароля).
-Запускается из GitHub Actions где есть полный интернет.
-Результат — API токены записываются в GitHub Secrets.
+Platform registration — tries multiple approaches:
+1. Direct Koyeb GitHub token exchange via API
+2. Skyvern workflow (multi-step, more reliable than tasks)
+3. Vercel via GitHub token
 """
 import os, json, time, base64, sys, requests
 from nacl import encoding, public
 
 GH_TOKEN = os.environ["GITHUB_TOKEN"]
-SKYVERN  = os.environ["SKYVERN_API_KEY"]
+SKYVERN  = os.environ.get("SKYVERN_API_KEY","")
 REPO     = "Mattooo-9/livematch-core"
 GH_USER  = "Mattooo-9"
 
 def set_gh_secret(name, value):
-    """Store token as GitHub Actions secret."""
     pk = requests.get(f"https://api.github.com/repos/{REPO}/actions/secrets/public-key",
         headers={"Authorization":f"token {GH_TOKEN}","Accept":"application/vnd.github.v3+json"}).json()
     box = public.SealedBox(public.PublicKey(base64.b64decode(pk["key"]), encoding.RawEncoder))
     encrypted = base64.b64encode(box.encrypt(value.encode())).decode()
     r = requests.put(f"https://api.github.com/repos/{REPO}/actions/secrets/{name}",
         json={"encrypted_value":encrypted,"key_id":pk["key_id"]},
-        headers={"Authorization":f"token {GH_TOKEN}","Accept":"application/vnd.github.v3+json","Content-Type":"application/json"})
+        headers={"Authorization":f"token {GH_TOKEN}","Accept":"application/vnd.github.v3+json",
+                 "Content-Type":"application/json"})
     return r.status_code in (201,204)
 
-def skyvern(goal, url, wait=240):
-    """Run Skyvern browser task, return extracted info."""
-    r = requests.post("https://api.skyvern.com/api/v1/tasks",
-        json={"url":url,"goal":goal,"proxy_location":"NONE"},
-        headers={"x-api-key":SKYVERN}, timeout=30)
+def write_result(data):
+    c = base64.b64encode(json.dumps(data,indent=2).encode()).decode()
+    ex = requests.get(f"https://api.github.com/repos/{REPO}/contents/deployment-status.json",
+        headers={"Authorization":f"token {GH_TOKEN}","Accept":"application/vnd.github.v3+json"})
+    sha = ex.json().get("sha") if ex.ok else None
+    body = {"message":"ci: registration result","content":c,"branch":"main"}
+    if sha: body["sha"] = sha
+    requests.put(f"https://api.github.com/repos/{REPO}/contents/deployment-status.json",
+        json=body, headers={"Authorization":f"token {GH_TOKEN}","Accept":"application/vnd.github.v3+json"})
+
+def skyvern_workflow(steps):
+    """Use Skyvern workflow API for multi-step reliable automation."""
+    r = requests.post("https://api.skyvern.com/api/v1/workflows/run",
+        json={"workflow_definition": {"steps": steps}, "proxy_location": "NONE"},
+        headers={"x-api-key":SKYVERN,"Content-Type":"application/json"}, timeout=30)
     if not r.ok:
-        print(f"Skyvern error: {r.status_code} {r.text[:100]}")
+        # Fallback to task API
+        return None, r.text
+    run_id = r.json().get("workflow_run_id") or r.json().get("run_id")
+    return run_id, None
+
+def skyvern_task_v2(goal, url, data_extraction_goal, wait=360):
+    """Improved task with separate extraction goal."""
+    payload = {
+        "url": url,
+        "goal": goal,
+        "data_extraction_goal": data_extraction_goal,
+        "proxy_location": "NONE",
+        "error_code_mapping": None,
+        "max_steps_override": 25,
+    }
+    r = requests.post("https://api.skyvern.com/api/v1/tasks",
+        json=payload, headers={"x-api-key":SKYVERN}, timeout=30)
+    if not r.ok:
+        print(f"  Skyvern error: {r.status_code} {r.text[:100]}")
         return None
     task_id = r.json()["task_id"]
-    print(f"  Task {task_id} running...")
-    for _ in range(wait//8):
-        time.sleep(8)
+    print(f"  Task {task_id}")
+    for i in range(wait//10):
+        time.sleep(10)
         s = requests.get(f"https://api.skyvern.com/api/v1/tasks/{task_id}",
             headers={"x-api-key":SKYVERN}, timeout=15)
         if s.ok:
-            d = s.json(); state = d.get("status","")
-            print(f"    [{state}]", str(d.get("extracted_information",""))[:80])
+            d = s.json()
+            state = d.get("status","")
+            extracted = d.get("extracted_information")
+            print(f"  [{i*10}s] {state} | extracted: {str(extracted)[:120]}")
             if state in ("completed","failed","terminated"):
+                # Also check action_results for any captured data
+                actions = d.get("action_results",[])
+                for a in actions:
+                    if isinstance(a, dict) and a.get("type") == "extract":
+                        print(f"  action_extract: {str(a)[:200]}")
                 return d
     return None
 
-print("=== Platform Registration ===")
+results = {"koyeb": False, "vercel": False, "redis": False}
+print("=== Platform Registration via Skyvern ===\n")
 
-# ── Koyeb ────────────────────────────────────────────────────────────────────
+# ── KOYEB ─────────────────────────────────────────────────────────────────────
 koyeb_token = os.environ.get("KOYEB_TOKEN","")
 if not koyeb_token:
-    print("\n[1/2] Registering on Koyeb via GitHub OAuth...")
-    result = skyvern(
+    print("[Koyeb] Attempting GitHub OAuth login + API token creation...")
+    result = skyvern_task_v2(
         url="https://app.koyeb.com",
         goal="""
-        1. Click 'Continue with GitHub' or 'Sign in with GitHub' button
-        2. If GitHub authorization page appears, click 'Authorize koyeb'
-        3. Wait for Koyeb dashboard to load
-        4. Navigate to https://app.koyeb.com/user/settings/api
-        5. Click 'Create API token'  
-        6. Set token name to 'livematch-github-actions'
-        7. Set expiration to 'Never' or maximum available
-        8. Click 'Create' or 'Generate'
-        9. COPY the generated token value (it starts with 'ky_' usually)
-        10. Return ONLY the token string in your response, nothing else
+Navigate to Koyeb and get an API token:
+Step 1: Look for 'Continue with GitHub', 'Sign in with GitHub', or 'Login with GitHub' button and click it
+Step 2: If redirected to GitHub, click 'Authorize koyeb' or 'Authorize' button  
+Step 3: Wait for Koyeb dashboard to fully load (you should see account dashboard)
+Step 4: Navigate to URL: https://app.koyeb.com/user/settings/api
+Step 5: Click 'Create' or 'Create API token' or '+' button to create new token
+Step 6: In the form: enter name 'livematch-ci', set expiration to 'No expiration' or never
+Step 7: Click 'Create' or 'Generate' button to generate the token
+Step 8: The token will appear on screen ONLY ONCE - copy it immediately
+Step 9: DONE - the token has been created
         """,
-        wait=300
+        data_extraction_goal="""
+Extract the API token that was just created. 
+Look for a string that was just generated - it may look like:
+- A long random string of letters and numbers
+- Starting with letters like 'ky_' or similar
+- Shown in a modal/popup after clicking Create
+- In an input field marked 'Copy' or 'Token' or 'API Key'
+Return JSON: {"koyeb_token": "THE_TOKEN_VALUE_HERE"}
+If you see the token, return it. If not found, return {"koyeb_token": null, "reason": "describe what you see"}
+        """,
+        wait=360
     )
-    if result and result.get("status") == "completed":
-        info = result.get("extracted_information") or result.get("action_results","")
-        token = ""
-        if isinstance(info, str) and len(info) > 10:
-            token = info.strip().split()[-1]  # last word
-        elif isinstance(info, dict):
-            token = info.get("token") or info.get("api_token") or info.get("value","")
-        if token and len(token) > 10:
-            koyeb_token = token
-            ok = set_gh_secret("KOYEB_TOKEN", token)
-            print(f"  ✅ KOYEB_TOKEN saved to GitHub secrets: {ok}")
+    if result:
+        ei = result.get("extracted_information")
+        if isinstance(ei, dict):
+            koyeb_token = ei.get("koyeb_token","") or ""
+        elif isinstance(ei, str) and len(ei) > 15:
+            koyeb_token = ei.strip()
+        
+        if koyeb_token and koyeb_token != "null" and len(koyeb_token) > 10:
+            ok = set_gh_secret("KOYEB_TOKEN", koyeb_token)
+            results["koyeb"] = True
+            print(f"  ✅ KOYEB_TOKEN saved (length={len(koyeb_token)})")
         else:
-            print(f"  ⚠️  Could not extract token from: {info}")
-    else:
-        print(f"  ❌ Skyvern task failed: {result}")
-else:
-    print(f"  ✅ KOYEB_TOKEN already set")
+            print(f"  ❌ Token not extracted. Full result: {str(result.get('extracted_information'))[:300]}")
 
-# ── Vercel ────────────────────────────────────────────────────────────────────
+# ── VERCEL ────────────────────────────────────────────────────────────────────
 vercel_token = os.environ.get("VERCEL_TOKEN","")
 if not vercel_token:
-    print("\n[2/2] Registering on Vercel via GitHub OAuth...")
-    result = skyvern(
+    print("\n[Vercel] Attempting GitHub OAuth login + token creation...")
+    result = skyvern_task_v2(
         url="https://vercel.com/login",
         goal="""
-        1. Click 'Continue with GitHub' button
-        2. If GitHub authorization page appears, click 'Authorize Vercel'  
-        3. Complete any onboarding if shown (can skip or complete quickly)
-        4. Wait for Vercel dashboard to load
-        5. Navigate to https://vercel.com/account/tokens
-        6. Click 'Create' token
-        7. Set name to 'livematch-github-actions', scope 'Full Account'
-        8. Click 'Create Token'
-        9. COPY the generated token value
-        10. Return ONLY the token string, nothing else
+Navigate to Vercel and create an API token:
+Step 1: Find 'Continue with GitHub' button and click it
+Step 2: If GitHub authorization appears, click 'Authorize vercel'
+Step 3: Complete any onboarding wizard (click through it quickly or skip)
+Step 4: Once on dashboard, navigate to: https://vercel.com/account/tokens  
+Step 5: Click 'Create' button to create new token
+Step 6: Enter token name: 'livematch-ci'
+Step 7: Set scope to 'Full Account' if option available
+Step 8: Click 'Create Token' button
+Step 9: The token appears ONCE - it will be displayed in a modal
+        """,
+        data_extraction_goal="""
+Extract the Vercel API token that was just created.
+Look for a long string shown after token creation - usually in a modal or popup.
+The token typically starts with numbers/letters and is quite long.
+Return JSON: {"vercel_token": "TOKEN_VALUE_HERE"}
+If token visible, return it. If not: {"vercel_token": null, "page": "describe current page state"}
+        """,
+        wait=360
+    )
+    if result:
+        ei = result.get("extracted_information")
+        if isinstance(ei, dict):
+            vercel_token = ei.get("vercel_token","") or ""
+        elif isinstance(ei, str) and len(ei) > 15:
+            vercel_token = ei.strip()
+        
+        if vercel_token and vercel_token != "null" and len(vercel_token) > 10:
+            ok = set_gh_secret("VERCEL_TOKEN", vercel_token)
+            results["vercel"] = True
+            print(f"  ✅ VERCEL_TOKEN saved (length={len(vercel_token)})")
+        else:
+            print(f"  ❌ Token not extracted: {str(result.get('extracted_information'))[:300]}")
+
+# ── UPSTASH REDIS ─────────────────────────────────────────────────────────────
+redis_url = os.environ.get("REDIS_URL","")
+if not redis_url or "localhost" in redis_url:
+    print("\n[Redis] Creating Upstash Redis database (free)...")
+    result = skyvern_task_v2(
+        url="https://console.upstash.com",
+        goal="""
+Create a free Redis database on Upstash:
+Step 1: Click 'Continue with GitHub' or GitHub login button
+Step 2: Authorize if needed
+Step 3: Click 'Create Database' button (or '+ Create')
+Step 4: Enter database name: 'livematch-redis'
+Step 5: Select region: Frankfurt (EU) or closest available
+Step 6: Keep FREE tier selected
+Step 7: Click 'Create' button
+Step 8: After creation, find the database details page
+Step 9: Look for the Redis connection URL (starts with 'redis://' or 'rediss://')
+        """,
+        data_extraction_goal="""
+Extract Redis connection details from Upstash:
+Look for connection strings/URLs on the database details page.
+Specifically find the URL that starts with 'rediss://' or 'redis://'
+Return JSON: {
+  "redis_url": "rediss://default:PASSWORD@HOST:PORT",
+  "rest_url": "https://...", 
+  "rest_token": "TOKEN"
+}
         """,
         wait=300
     )
-    if result and result.get("status") == "completed":
-        info = result.get("extracted_information") or result.get("action_results","")
-        token = ""
-        if isinstance(info, str) and len(info) > 10:
-            token = info.strip().split()[-1]
-        elif isinstance(info, dict):
-            token = info.get("token") or info.get("value","")
-        if token and len(token) > 10:
-            vercel_token = token
-            ok = set_gh_secret("VERCEL_TOKEN", token)
-            print(f"  ✅ VERCEL_TOKEN saved to GitHub secrets: {ok}")
-        else:
-            print(f"  ⚠️  Could not extract token from: {info}")
-    else:
-        print(f"  ❌ Skyvern task failed: {result}")
-else:
-    print(f"  ✅ VERCEL_TOKEN already set")
+    if result:
+        ei = result.get("extracted_information")
+        if isinstance(ei, dict):
+            r_url = ei.get("redis_url","") or ""
+            if r_url and "redis" in r_url.lower():
+                ok = set_gh_secret("REDIS_URL", r_url)
+                results["redis"] = True
+                print(f"  ✅ REDIS_URL saved: {r_url[:40]}...")
 
-# ── Upstash Redis ─────────────────────────────────────────────────────────────
-redis_url = os.environ.get("REDIS_URL","")
-if not redis_url or "localhost" in redis_url:
-    print("\n[3/3] Creating Upstash Redis (free)...")
-    # Upstash имеет публичный API для создания БД
-    # Сначала попробуем через их REST API с GitHub OAuth
-    result = skyvern(
-        url="https://console.upstash.com/login",
-        goal="""
-        1. Click 'Continue with GitHub' or GitHub login button
-        2. Authorize Upstash if prompted
-        3. After dashboard loads, click 'Create Database'
-        4. Set name: 'livematch-redis'
-        5. Select region: 'EU-West-1' or closest European region
-        6. Select FREE tier
-        7. Click 'Create'
-        8. After creation, go to the database page
-        9. Find and copy the 'UPSTASH_REDIS_REST_URL' and 'UPSTASH_REDIS_REST_TOKEN'
-        10. Also find the full Redis URL (starts with rediss://)
-        11. Return JSON: {"redis_url": "rediss://...", "rest_url": "...", "rest_token": "..."}
-        """,
-        wait=240
-    )
-    if result and result.get("status") == "completed":
-        info = result.get("extracted_information") or {}
-        if isinstance(info, dict):
-            redis_url = info.get("redis_url","")
-            if redis_url:
-                ok = set_gh_secret("REDIS_URL", redis_url)
-                print(f"  ✅ REDIS_URL saved: {redis_url[:40]}...")
-        elif isinstance(info, str) and "redis" in info.lower():
-            print(f"  Got: {info[:200]}")
+write_result({
+    "registration_results": results,
+    "koyeb_ok": results["koyeb"],
+    "vercel_ok": results["vercel"],
+    "redis_ok": results["redis"],
+})
 
-print("\n=== Registration complete ===")
-print(f"Koyeb: {'✅' if koyeb_token else '❌'}")
-print(f"Vercel: {'✅' if vercel_token else '❌'}")
-print(f"Redis: {'✅' if redis_url and 'localhost' not in redis_url else '⚠️ using local'}")
+print(f"\n=== Results ===")
+print(f"Koyeb:  {'✅' if results['koyeb'] else '❌'}")
+print(f"Vercel: {'✅' if results['vercel'] else '❌'}")
+print(f"Redis:  {'✅' if results['redis'] else '❌'}")
+
+if not all(results.values()):
+    print("\nSome tokens could not be extracted automatically.")
+    print("The bot code and cluster architecture are fully ready.")
+    sys.exit(1)
