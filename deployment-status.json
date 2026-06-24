@@ -1,20 +1,10 @@
 {
-  "success": false,
-  "error": "Could not get Koyeb token automatically. Please: 1) Go to https://app.koyeb.com/user/settings/api 2) Create a token 3) Add as KOYEB_TOKEN GitHub secret 4) Re-run this workflow",
-  "log": [
-    "=== LiveMatch Core \u2192 Koyeb Deploy ===",
-    "Getting Koyeb token via Skyvern...",
-    "  Skyvern task: tsk_543410188031079686",
-    "    [running] None",
-    "    [running] None",
-    "    [running] None",
-    "    [running] None",
-    "    [running] None",
-    "    [running] None",
-    "    [running] None",
-    "    [completed] None",
-    "  Extracted: [{}]",
-    "  No token extracted",
-    "FATAL: Could not get Koyeb token automatically. Please: 1) Go to https://app.koyeb.com/user/settings/api 2) Create a token 3) Add as KOYEB_TOKEN GitHub secret 4) Re-run this workflow"
-  ]
+  "registration_results": {
+    "koyeb": false,
+    "vercel": false,
+    "redis": false
+  },
+  "koyeb_ok": false,
+  "vercel_ok": false,
+  "redis_ok": false
 }
