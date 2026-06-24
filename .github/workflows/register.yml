@@ -1,0 +1,36 @@
+name: Register Platforms (run once)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  register:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.11"}
+      - run: pip install -q requests PyNaCl
+      - name: Register Koyeb, Vercel, Upstash via Skyvern
+        env:
+          GITHUB_TOKEN:    ${{ secrets.GITHUB_TOKEN }}
+          SKYVERN_API_KEY: ${{ secrets.SKYVERN_API_KEY }}
+          KOYEB_TOKEN:     ${{ secrets.KOYEB_TOKEN }}
+          VERCEL_TOKEN:    ${{ secrets.VERCEL_TOKEN }}
+          REDIS_URL:       ${{ secrets.REDIS_URL }}
+        run: python .github/scripts/register_platforms.py
+
+      - name: Trigger deploy after registration
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          curl -s -X POST \
+            -H "Authorization: token $GH_TOKEN" \
+            -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/repos/Mattooo-9/livematch-core/actions/workflows/deploy.yml/dispatches" \
+            -d '{"ref":"main"}'
+          echo "Deploy workflow triggered"
